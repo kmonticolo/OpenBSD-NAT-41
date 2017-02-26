@@ -1,0 +1,147 @@
+#!bin/sh
+
+TZ=Europe/Warsaw	# Time zones are in /usr/share/zoneinfo
+#SETS="comp man misc"
+SETS=""			# bo chce tylko do etc wlacznie
+DISK="wd0"
+VER="41"
+
+#NAMESERVER="192.168.69.2 192.168.69.3" # Up to three
+#GATE=192.168.69.1
+#MASK=255.255.255.0
+DOMAIN=example.com
+SEARCH="$DOMAIN"
+
+ROOTPW='$2a$06$Feuy6hwjHkDKJygMkxgFO.NKm3MHD9h61voLHWi0OBq8INbQ7dUHa'
+
+
+
+
+echo "Automagiczny instalator Swierszcza - OpenBSD"
+
+echo "Po skonczonej instalacji Swiersz zostanie zrestartowany"
+
+
+DOMAIN="aster.pl"
+    echo -n "Nazwa Swierszcza? (lub sh startuje shella): "
+    #read HOSTNAME
+    HOSTNAME="swierszcz"
+    test "$HOSTNAME" = sh && { sh; continue; }
+hostname $HOSTNAME.$DOMAIN
+
+fdisk -e $DISK <<EOF
+reinit
+update
+write
+quit
+EOF
+
+
+TMPDEV=${DISK}d
+VARDEV=${DISK}e
+USRDEV=${DISK}f
+HOMEDEV=${DISK}g
+VARLOGDEV=${DISK}h
+
+  #a: 2097585 63 4.2BSD 2048 16384 328 1g (?) wd0a
+
+#disklabel -d $DISK >/tmp/default_label
+#disklabel -R $DISK /tmp/default_label # Put a default label on first
+EDITOR=ed disklabel -e $DISK <<EOF
+/^  a: 
+c
+  a: 524397 63 4.2BSD 2048 16384 328
+  b: 4195170 524460 swap
+.
++
+a
+  d: 524397 4719630 4.2BSD 2048 16384 328
+  e: 2097585 5244027 4.2BSD 2048 16384 328
+  f: 2097585 7341612 4.2BSD 2048 16384 328
+  g: 2097585 9439197 4.2BSD 2048 16384 328
+  h: 144713218 11536782 4.2BSD 2048 16384 328
+.
+w
+q
+EOF
+
+newfs -q /dev/r${DISK}a
+newfs -q /dev/r$TMPDEV
+newfs -q /dev/r$VARDEV
+newfs -q /dev/r$USRDEV
+newfs -q /dev/r$HOMEDEV
+newfs -q /dev/r$VARLOGDEV
+
+mount /dev/${DISK}a /mnt
+mkdir -p /mnt/{etc,tmp,usr,var,home}
+
+mount /dev/$TMPDEV /mnt/tmp; chmod 1777 /mnt/tmp
+mount /dev/$VARDEV /mnt/var
+mount /dev/$USRDEV /mnt/usr
+mount /dev/$HOMEDEV /mnt/home
+mkdir -p /mnt/var/log
+mount /dev/$VARLOGDEV /mnt/var/log
+
+mknod /dev/cd1c b 6 18
+
+#mount -t cd9660 -o ro /dev/cd1c /mnt2 
+    cp /mnt2/bsd.rd /mnt/
+    cp /mnt2/bsd.mp /mnt/bsd
+#echo -n "Rozpakowuje: "
+    tar zxphf /mnt2/base${VER}.tgz -C /mnt
+    tar zxphf /mnt2/etc${VER}.tgz -C /mnt
+    #tar zxphf /mnt2/gdacz.tgz -C /mnt
+    tar zxphf /mnt2/sw${VER}.tgz -C /mnt
+    echo "" > /mnt/var/log/all.log && chmod 600 /mnt/var/log/all.log
+cat >/mnt/etc/fstab <<EOF
+/dev/${DISK}a / ffs rw,softdep 1 1
+/dev/${DISK}b none swap sw 0 0
+/dev/$TMPDEV /tmp ffs rw,softdep,nodev,nosuid 1 2
+/dev/$USRDEV /usr ffs rw,softdep,nodev 1 2
+/dev/$VARDEV /var ffs rw,softdep,nodev,nosuid 1 2
+/dev/$HOMEDEV /home ffs rw,softdep,nodev,nosuid 1 2
+/dev/$VARLOGDEV /var/log ffs rw,softdep,nodev,nosuid 1 2
+EOF
+
+#echo inet $IPADDR $MASK NONE >/mnt/etc/hostname.bge0
+hostname >/mnt/etc/myname
+echo $GATE >/mnt/etc/mygate
+
+cat >/mnt/etc/hosts <<EOF
+::1 localhost.$DOMAIN localhost
+127.0.0.1 localhost.$DOMAIN localhost
+$IPADDR `hostname -s`.$DOMAIN `hostname -s`
+EOF
+
+cat >/mnt/etc/resolv.conf <<EOF
+lookup file bind
+nameserver 212.76.33.1
+nameserver 212.76.32.1
+EOF
+
+cat >/mnt/var/log/all.log <<EOF
+EOF
+
+ed /mnt/etc/master.passwd <<EOF
+1,s@^root::@root:$ROOTPW:@
+w
+q
+EOF
+/mnt/usr/sbin/pwd_mkdb -p -d /mnt/etc /etc/master.passwd
+
+ln -sf /usr/share/zoneinfo/$TZ /mnt/etc/localtime
+ 
+/mnt/sbin/swapctl -a /dev/${DISK}b
+( cd /mnt/dev && sh MAKEDEV all )
+
+dd if=/mnt/dev/urandom of=/mnt/var/db/host.random bs=1024 count=64
+chmod 600 /mnt/var/db/host.random
+
+cat /usr/mdec/boot >/mnt/boot
+/usr/mdec/installboot -v /mnt/boot /usr/mdec/biosboot ${DISK}
+
+test -x /mnt/install.site && /mnt/usr/sbin/chroot /mnt /install.site
+rm -f /mnt/install.site
+
+halt
+exit 0
